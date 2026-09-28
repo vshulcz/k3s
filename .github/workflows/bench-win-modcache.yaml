@@ -1,0 +1,65 @@
+name: bench windows modcache
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with: {fetch-depth: 1}
+    - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
+      with:
+        go-version-file: 'go.mod'
+        cache: true
+    - run: go test -coverpkg ./pkg/... -coverprofile coverage.out ./pkg/... -run Unit
+
+  windows:
+    needs: seed
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [cold, linux-modcache]
+        rep: [1, 2]
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with: {fetch-depth: 1}
+    - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
+      with:
+        go-version-file: 'go.mod'
+        cache: false
+    - name: Restore Linux module cache
+      if: matrix.arm == 'linux-modcache'
+      uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+      with:
+        # Same literal paths, in the same order, as setup-go's Linux save, so the cache version matches.
+        path: |
+          /home/runner/go/pkg/mod
+          /home/runner/.cache/go-build
+        key: setup-go-Linux-x64-ubuntu24-go-
+        restore-keys: setup-go-Linux-x64-ubuntu24-go-
+        enableCrossOsArchive: true
+    - name: Point GOMODCACHE at the restored tree
+      if: matrix.arm == 'linux-modcache'
+      shell: pwsh
+      run: |
+        foreach ($p in 'D:\go\pkg\mod', 'D:\home\runner\go\pkg\mod', 'C:\home\runner\go\pkg\mod', 'D:\a\go\pkg\mod') {
+          if (Test-Path "$p\cache\download") {
+            "found $p"
+            (Get-ChildItem $p -Directory).Count
+            "GOMODCACHE=$p" | Out-File -FilePath $env:GITHUB_ENV -Append
+            exit 0
+          }
+        }
+        "module cache not found"; Get-ChildItem D:\ ; exit 1
+    - name: Run Unit Tests
+      shell: bash
+      run: |
+        go env GOMODCACHE
+        start=$(date +%s)
+        go test -coverpkg ./pkg/... -coverprofile coverage.out ./pkg/... -run Unit 2>&1 | tee test.log | tail -3
+        echo "test step $(( $(date +%s) - start ))s, downloads $(grep -c 'go: downloading' test.log)"
