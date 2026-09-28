@@ -1,6 +1,7 @@
 name: bench windows modcache
 on:
-  workflow_dispatch: {}
+  push:
+    branches: [bench-win-modcache]
 
 permissions:
   contents: read
